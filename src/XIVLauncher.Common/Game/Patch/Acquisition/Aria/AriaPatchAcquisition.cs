@@ -1,7 +1,6 @@
 using System;
 using System.Diagnostics;
 using System.IO;
-using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
@@ -40,12 +39,7 @@ public class AriaPatchAcquisition(FileInfo logFile) : IPatchAcquisition, IDispos
             var rng = new Random();
             var secret = BitConverter.ToString(MD5.Create().ComputeHash(Encoding.UTF8.GetBytes($"{rng.Next()}{rng.Next()}{rng.Next()}{rng.Next()}")));
 
-            var ariaPath = Path.Combine(Paths.ResourcesPath, "aria2c-xl.exe");
-
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-            {
-                ariaPath = "aria2c";
-            }
+            var ariaPath = AriaExecutableResolver.Resolve();
 
             var ariaPort = PlatformHelpers.GetAvailablePort();
             var ariaHost = $"http://localhost:{ariaPort}/jsonrpc";
