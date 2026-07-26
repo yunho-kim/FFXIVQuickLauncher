@@ -254,10 +254,11 @@ public sealed class KoreanLauncherClient : IDisposable
 
         if (motpUse == "O")
         {
-            var motpId = GetRequiredScalar(json, "motpID", KoreanLauncherStage.Login);
-            if (string.IsNullOrWhiteSpace(motpId))
-                throw InvalidResponse(KoreanLauncherStage.Login);
-            sessionForm["motpID"] = motpId;
+            // The official launcher accepts an empty motpID and submits it as-is to OTPCheck.
+            // Some U-OTP accounts return an empty value here, so requiring a non-empty ID
+            // rejects an otherwise valid login before the user can enter their OTP.
+            if (GetOptionalScalar(json, "motpID", KoreanLauncherStage.Login) is { } motpId)
+                sessionForm["motpID"] = motpId;
         }
 
         if (GetOptionalScalar(json, "freeTrial", KoreanLauncherStage.Login) is { } freeTrial)

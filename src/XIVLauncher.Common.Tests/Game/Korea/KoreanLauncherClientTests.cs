@@ -219,13 +219,52 @@ public class KoreanLauncherClientTests
             tokenForm.Keys.ToArray());
     }
 
+    [TestMethod]
+    public async Task EmptyMotpIdIsForwardedToOtpCheck()
+    {
+        const string loginResponse =
+            """{"result":"0","loginResult":"O","motpUse":"O","motpID":"","memberID":"fixture-user","memberKey":"fixture-key","csiteNo":"0"}""";
+        Dictionary<string, string>? otpForm = null;
+        var handler = new FixtureHandler(
+            Step(Response("launcher-login.html")),
+            Step(CaptchaResponse()),
+            Step(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(loginResponse, Encoding.UTF8, "application/json"),
+            }),
+            async request =>
+            {
+                Assert.AreEqual("/LauncherFF/OTPCheck", request.RequestUri!.AbsolutePath);
+                otpForm = await ReadFormAsync(request);
+                return Response("otp-success.json");
+            });
+
+        using var client = CreateClient(handler);
+        var challenge = await client.PrepareLoginAsync(CancellationToken.None);
+        var login = await client.LoginAsync(
+            challenge,
+            "fixture-user",
+            PasswordSentinel,
+            CaptchaSentinel,
+            CancellationToken.None);
+        var authenticated = await client.SubmitOtpAsync(
+            login.OtpChallenge!,
+            OtpSentinel,
+            CancellationToken.None);
+
+        Assert.AreEqual(KoreanLoginStatus.Authenticated, authenticated.Status);
+        Assert.AreEqual(string.Empty, otpForm!["motpID"]);
+        Assert.AreEqual(OtpSentinel, otpForm["otpNum"]);
+        Assert.AreEqual("fixture-key", otpForm["memberKey"]);
+        Assert.AreEqual("fixture-user", otpForm["memberID"]);
+    }
+
     [DataTestMethod]
     [DataRow("""{"result":"0","loginResult":"O","memberID":"fixture-user","memberKey":"fixture-key","csiteNo":"0"}""")]
     [DataRow("""{"result":"0","loginResult":"O","motpUse":"unknown","memberID":"fixture-user","memberKey":"fixture-key","csiteNo":"0"}""")]
     [DataRow("""{"result":"0","loginResult":"O","motpUse":"X","memberKey":"fixture-key","csiteNo":"0"}""")]
     [DataRow("""{"result":"0","loginResult":"O","motpUse":"X","memberID":"fixture-user","csiteNo":"0"}""")]
     [DataRow("""{"result":"0","loginResult":"O","motpUse":"X","memberID":"fixture-user","memberKey":"fixture-key"}""")]
-    [DataRow("""{"result":"0","loginResult":"O","motpUse":"O","memberID":"fixture-user","memberKey":"fixture-key","csiteNo":"0"}""")]
     [DataRow("""{"result":"0","loginResult":"O","motpUse":[],"memberID":"fixture-user","memberKey":"fixture-key","csiteNo":"0"}""")]
     public async Task IncompleteSuccessfulLoginResponseIsRejected(string responseBody)
     {
