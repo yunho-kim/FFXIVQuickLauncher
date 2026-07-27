@@ -138,6 +138,10 @@ public class KoreanLauncherClientTests
         Assert.AreEqual("fixture-token", postedForm["BDC_VCID_LauncherLoginCaptcha"]);
         Assert.AreEqual("fixture-hash", postedForm["BDC_Hs_LauncherLoginCaptcha"]);
         Assert.AreEqual("1", postedForm["BDC_BackWorkaround_LauncherLoginCaptcha"]);
+        Assert.AreEqual("true", postedForm["setting_update"]);
+        Assert.IsFalse(postedForm.ContainsKey("setting_dx11"));
+        Assert.IsFalse(postedForm.ContainsKey("setting_reset"));
+        Assert.IsFalse(postedForm.ContainsKey("disabled_setting"));
         Assert.AreEqual("fixture-user", postedForm["memberID"]);
         Assert.AreEqual(PasswordSentinel, postedForm["passWord"]);
         Assert.AreEqual(CaptchaSentinel, postedForm["CaptchaCode"]);
@@ -215,7 +219,8 @@ public class KoreanLauncherClientTests
             new[]
             {
                 "gameServiceID", "csiteNo", "isPcBang", "InternetCafeType", "hid_freeTrial",
-                "hid_freeTrialRemainDate", "cancelFlag", "chNppAuth", "resetSetting", "BDC_VCID_LauncherLoginCaptcha",
+                "hid_freeTrialRemainDate", "cancelFlag", "chNppAuth", "resetSetting", "setting_update",
+                "BDC_VCID_LauncherLoginCaptcha",
                 "BDC_BackWorkaround_LauncherLoginCaptcha", "BDC_Hs_LauncherLoginCaptcha",
                 "BDC_SP_LauncherLoginCaptcha", "memberID", "passWord", "CaptchaCode", "checkMemberID",
                 "memberKey", "motpID", "otpNum", "decideDX", "decideAS",

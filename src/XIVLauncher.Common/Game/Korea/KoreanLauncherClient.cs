@@ -99,8 +99,17 @@ public sealed class KoreanLauncherClient : IDisposable
             if (!attributes.TryGetValue("name", out var name) || string.IsNullOrWhiteSpace(name))
                 continue;
 
+            if (HasBooleanAttribute(tag.Value, "disabled"))
+                continue;
+
+            var isCheckable = attributes.TryGetValue("type", out var type)
+                              && (string.Equals(type, "checkbox", StringComparison.OrdinalIgnoreCase)
+                                  || string.Equals(type, "radio", StringComparison.OrdinalIgnoreCase));
+            if (isCheckable && !HasBooleanAttribute(tag.Value, "checked"))
+                continue;
+
             attributes.TryGetValue("value", out var value);
-            form[name] = value ?? string.Empty;
+            form[name] = value ?? (isCheckable ? "on" : string.Empty);
         }
 
         if (!form.ContainsKey("gameServiceID")
@@ -438,6 +447,14 @@ public sealed class KoreanLauncherClient : IDisposable
         }
 
         return attributes;
+    }
+
+    private static bool HasBooleanAttribute(string tag, string attributeName)
+    {
+        return Regex.IsMatch(
+            tag,
+            $@"(?<![\w:-]){Regex.Escape(attributeName)}(?:\s*=\s*(?:""[^""]*""|'[^']*'|[^\s>]+))?(?=\s|/?>)",
+            RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.CultureInvariant);
     }
 
     private static string GetRequiredScalar(
