@@ -209,7 +209,7 @@ public class KoreanLauncherClientTests
         Assert.AreEqual("1", tokenForm["decideDX"]);
         Assert.AreEqual("1", tokenForm["decideAS"]);
         Assert.AreEqual("true", tokenForm["checkMemberID"]);
-        Assert.IsFalse(tokenForm.Values.Contains(OtpSentinel));
+        Assert.AreEqual(OtpSentinel, tokenForm["otpNum"]);
         Assert.IsFalse(tokenForm.Values.Contains(PasswordSentinel));
         CollectionAssert.AreEquivalent(
             new[]
@@ -218,7 +218,7 @@ public class KoreanLauncherClientTests
                 "hid_freeTrialRemainDate", "cancelFlag", "chNppAuth", "resetSetting", "BDC_VCID_LauncherLoginCaptcha",
                 "BDC_BackWorkaround_LauncherLoginCaptcha", "BDC_Hs_LauncherLoginCaptcha",
                 "BDC_SP_LauncherLoginCaptcha", "memberID", "passWord", "CaptchaCode", "checkMemberID",
-                "memberKey", "motpID", "decideDX", "decideAS",
+                "memberKey", "motpID", "otpNum", "decideDX", "decideAS",
             },
             tokenForm.Keys.ToArray());
     }

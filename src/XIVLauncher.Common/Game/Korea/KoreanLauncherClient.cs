@@ -299,6 +299,11 @@ public sealed class KoreanLauncherClient : IDisposable
         if (otpResult.Length != 0)
             throw AuthenticationException(KoreanLauncherStage.Otp, KoreanLauncherError.OtpRejected, "otp_rejected");
 
+        // The official Korean launcher carries the accepted OTP forward into
+        // the login form submitted to MakeToken. OTPCheck succeeding alone is
+        // not enough to complete the game-session transition.
+        sessionForm["otpNum"] = otp;
+
         return KoreanLoginResult.Authenticated(sessionForm);
     }
 
