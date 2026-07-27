@@ -307,9 +307,19 @@ public sealed class KoreanLauncherClient : IDisposable
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(session);
+        var tokenForm = new Dictionary<string, string>(session.Form, StringComparer.Ordinal)
+        {
+            // Match the Korean launcher's form transition after authentication
+            // and before requesting a game session token.
+            ["passWord"] = string.Empty,
+            ["InternetCafeType"] = "0",
+            ["decideDX"] = "1",
+            ["decideAS"] = "1",
+            ["checkMemberID"] = "true",
+        };
         using var response = await PostFormAsync(
             "LauncherFF/MakeToken",
-            session.Form,
+            tokenForm,
             KoreanLauncherStage.Token,
             cancellationToken).ConfigureAwait(false);
         var json = await ParseJsonAsync(response, KoreanLauncherStage.Token, cancellationToken).ConfigureAwait(false);
