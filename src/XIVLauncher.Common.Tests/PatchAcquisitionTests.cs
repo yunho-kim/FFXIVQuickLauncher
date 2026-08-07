@@ -59,7 +59,9 @@ namespace XIVLauncher.Common.Tests
         public void TestVersionDecode()
         {
             Assert.AreEqual("game/4e9a232b/H2017.06.06.0000.0001a.patch", testPatch.GetUrlPath());
-            Assert.AreEqual("game\\4e9a232b\\H2017.06.06.0000.0001a.patch", testPatch.GetFilePath());
+            Assert.AreEqual(
+                Path.Combine("game", "4e9a232b", "H2017.06.06.0000.0001a.patch"),
+                testPatch.GetFilePath());
             Assert.AreEqual("ffxiv", testPatch.GetRepoName());
         }
 

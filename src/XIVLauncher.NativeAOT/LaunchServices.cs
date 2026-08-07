@@ -7,9 +7,11 @@ using XIVLauncher.Common;
 using XIVLauncher.Common.Dalamud;
 using XIVLauncher.Common.Game;
 using XIVLauncher.Common.Game.Exceptions;
+using XIVLauncher.Common.Game.Korea;
 using XIVLauncher.Common.Game.Launcher;
 using XIVLauncher.Common.Game.Patch;
 using XIVLauncher.Common.PlatformAbstractions;
+using XIVLauncher.Common.Patching.ZiPatch;
 using XIVLauncher.Common.Unix;
 using XIVLauncher.Common.Util;
 using XIVLauncher.Common.Windows;
@@ -107,21 +109,47 @@ public static class LaunchServices
 
     public static bool CheckPatchValidity(FileInfo path, long patchLength, long hashBlockSize, string hashType, string[] hashes)
     {
-        if (hashType != "sha1")
+        if (!path.Exists || path.Length != patchLength)
         {
-            Log.Error("??? Unknown HashType: {0} for {1}", hashType, path.FullName);
-            return true;
-        }
-
-        var stream = path.OpenRead();
-
-        if (stream.Length != patchLength)
-        {
-            Log.Error("Bad length for patch {0}: {1} instead of {2}", path.FullName, stream.Length, patchLength);
+            Log.Error("Bad length for patch {Path}: {ActualLength} instead of {ExpectedLength}", path.FullName, path.Exists ? path.Length : 0, patchLength);
             return false;
         }
 
+        if (hashType == "zipatch")
+        {
+            try
+            {
+                using var fileStream = path.OpenRead();
+                using var patch = new ZiPatchFile(fileStream, true);
+                foreach (var chunk in patch.GetChunks())
+                {
+                    if (!chunk.IsChecksumValid)
+                    {
+                        Log.Error("Korean patch {Path} has an invalid checksum in {ChunkType}", path.FullName, chunk.ChunkType);
+                        return false;
+                    }
+                }
+
+                return true;
+            }
+            catch (Exception exception)
+            {
+                Log.Error(exception, "Could not parse Korean patch {Path}", path.FullName);
+                return false;
+            }
+        }
+
+        if (hashType != "sha1" || hashBlockSize <= 0 || hashes.Length == 0)
+        {
+            Log.Error("Unknown or incomplete hash metadata: {HashType} for {Path}", hashType, path.FullName);
+            return false;
+        }
+
+        using var stream = path.OpenRead();
+
         var parts = (int)Math.Ceiling((double)patchLength / hashBlockSize);
+        if (hashes.Length != parts)
+            return false;
         var block = new byte[hashBlockSize];
 
         for (var i = 0; i < parts; i++)
@@ -148,11 +176,9 @@ public static class LaunchServices
             if (sb.ToString() == hashes[i])
                 continue;
 
-            stream.Close();
             return false;
         }
 
-        stream.Close();
         return true;
     }
 
@@ -265,6 +291,56 @@ public static class LaunchServices
         return launchedProcess!;
     }
 
+    public static Process StartKoreanGameAndAddon(string gameToken, bool dalamudOk)
+    {
+        IDalamudRunner dalamudRunner = Environment.OSVersion.Platform switch
+        {
+            PlatformID.Win32NT => new WindowsDalamudRunner(Program.DalamudUpdater.Runtime),
+            PlatformID.Unix => new UnixDalamudRunner(Program.CompatibilityTools, Program.DotnetRuntime),
+            _ => throw new ArgumentOutOfRangeException()
+        };
+
+        var dalamudLauncher = new DalamudLauncher(
+            dalamudRunner,
+            Program.DalamudUpdater,
+            Program.Config!.DalamudLoadMethod.GetValueOrDefault(DalamudLoadMethod.DllInject),
+            Program.Config.GamePath,
+            Program.Storage!.Root,
+            Program.Storage.GetFolder("logs"),
+            ClientLanguage.Korean,
+            Program.Config.DalamudLoadDelay,
+            false,
+            false,
+            false,
+            Troubleshooting.GetTroubleshootingJson());
+
+        IGameRunner runner;
+        var gameArgs = Program.Config.AdditionalArgs ?? string.Empty;
+
+        if (Environment.OSVersion.Platform == PlatformID.Win32NT)
+        {
+            runner = new WindowsGameRunner(dalamudLauncher, dalamudOk);
+        }
+        else if (Environment.OSVersion.Platform == PlatformID.Unix)
+        {
+            runner = new UnixGameRunner(Program.CompatibilityTools, dalamudLauncher, dalamudOk);
+            var userPath = Program.CompatibilityTools!.UnixToWinePath(Program.Config.GameConfigPath!.FullName);
+            gameArgs += $" UserPath=\"{userPath}\"";
+        }
+        else
+        {
+            throw new PlatformNotSupportedException();
+        }
+
+        var process = new KoreanGameLauncher().LaunchGame(
+            runner,
+            gameToken,
+            gameArgs,
+            Program.Config.GamePath,
+            Program.Config.DpiAwareness.GetValueOrDefault(DpiAwareness.Unaware));
+        return process ?? throw new InvalidOperationException("The Korean game process was not created.");
+    }
+
     public static async Task<int> GetExitCode(int pid)
     {
         var process = Process.GetProcessById(pid);
@@ -321,5 +397,3 @@ public static class LaunchServices
         return string.Empty;
     }
 }
-
-

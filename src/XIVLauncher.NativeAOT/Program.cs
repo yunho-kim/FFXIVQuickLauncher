@@ -27,6 +27,7 @@ namespace XIVLauncher.NativeAOT;
 [JsonSerializable(typeof(RepairProgress))]
 [JsonSerializable(typeof(DalamudConsoleOutput))]
 [JsonSerializable(typeof(PatchListEntry[]))]
+[JsonSerializable(typeof(KoreanInteropResponse))]
 internal partial class ProgramJsonContext : JsonSerializerContext
 {
 }
@@ -208,6 +209,53 @@ public class Program
             Troubleshooting.LogException(ex, "An error during login occured");
             return MarshalUtf8.StringToHGlobal(ex.Message);
         }
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "koreanPrepareLogin")]
+    public static nint KoreanPrepareLogin()
+    {
+        return MarshalUtf8.StringToHGlobal(KoreanInteropService.PrepareLogin());
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "koreanLogin")]
+    public static nint KoreanLogin(nint username, nint password, nint captchaCode)
+    {
+        return MarshalUtf8.StringToHGlobal(KoreanInteropService.Login(
+            Marshal.PtrToStringUTF8(username) ?? string.Empty,
+            Marshal.PtrToStringUTF8(password) ?? string.Empty,
+            Marshal.PtrToStringUTF8(captchaCode) ?? string.Empty));
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "koreanSubmitOtp")]
+    public static nint KoreanSubmitOtp(nint otp)
+    {
+        return MarshalUtf8.StringToHGlobal(KoreanInteropService.SubmitOtp(
+            Marshal.PtrToStringUTF8(otp) ?? string.Empty));
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "koreanGetPatches")]
+    public static nint KoreanGetPatches()
+    {
+        return MarshalUtf8.StringToHGlobal(KoreanInteropService.GetPatches());
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "koreanStartGame")]
+    public static nint KoreanStartGame(bool dalamudOk)
+    {
+        return MarshalUtf8.StringToHGlobal(KoreanInteropService.StartGame(dalamudOk));
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "koreanResetSession")]
+    public static void KoreanResetSession()
+    {
+        KoreanInteropService.ResetSession();
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "freeNativeString")]
+    public static void FreeNativeString(nint value)
+    {
+        if (value != nint.Zero)
+            Marshal.FreeHGlobal(value);
     }
 
     [UnmanagedCallersOnly(EntryPoint = "getUserAgent")]

@@ -463,7 +463,7 @@ namespace XIVLauncher.Common.Game.Patch
             if (patchListEntry.HashType != "sha1")
             {
                 // Boot patches do not have a hash. We can parse them here to see if they are valid.
-                if (patchListEntry.GetRepo() == Repository.Boot)
+                if (patchListEntry.GetRepo() == Repository.Boot || patchListEntry.HashType == "zipatch")
                 {
                     try
                     {

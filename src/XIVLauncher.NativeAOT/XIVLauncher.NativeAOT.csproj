@@ -32,8 +32,8 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" Version="3.3.4-beta1.23055.4" />
     <PackageReference Include="Microsoft.CodeAnalysis.NetAnalyzers" Version="8.0.0-*" />
-    <PackageReference Include="Microsoft.DotNet.ILCompiler" Version="8.0.22" />
-    <PackageReference Include="Microsoft.NET.ILLink.Tasks" Version="8.0.22" />
+    <PackageReference Include="Microsoft.DotNet.ILCompiler" Version="8.0.29" />
+    <PackageReference Include="Microsoft.NET.ILLink.Tasks" Version="8.0.29" />
   </ItemGroup>
   <ItemGroup>
     <RdXmlFile Include="rd.xml" />
