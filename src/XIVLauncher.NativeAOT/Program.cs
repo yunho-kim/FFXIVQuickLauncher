@@ -28,6 +28,7 @@ namespace XIVLauncher.NativeAOT;
 [JsonSerializable(typeof(DalamudConsoleOutput))]
 [JsonSerializable(typeof(PatchListEntry[]))]
 [JsonSerializable(typeof(KoreanInteropResponse))]
+[JsonSerializable(typeof(ConfigBackupInteropResponse))]
 internal partial class ProgramJsonContext : JsonSerializerContext
 {
 }
@@ -249,6 +250,23 @@ public class Program
     public static void KoreanResetSession()
     {
         KoreanInteropService.ResetSession();
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "exportConfigBackup")]
+    public static nint ExportConfigBackup(nint configPath, nint destinationPath)
+    {
+        return MarshalUtf8.StringToHGlobal(ConfigBackupInteropService.Export(
+            Marshal.PtrToStringUTF8(configPath) ?? string.Empty,
+            Marshal.PtrToStringUTF8(destinationPath) ?? string.Empty));
+    }
+
+    [UnmanagedCallersOnly(EntryPoint = "importConfigBackup")]
+    public static nint ImportConfigBackup(nint configPath, nint sourcePath, bool preserveNewerFiles)
+    {
+        return MarshalUtf8.StringToHGlobal(ConfigBackupInteropService.Import(
+            Marshal.PtrToStringUTF8(configPath) ?? string.Empty,
+            Marshal.PtrToStringUTF8(sourcePath) ?? string.Empty,
+            preserveNewerFiles));
     }
 
     [UnmanagedCallersOnly(EntryPoint = "freeNativeString")]
