@@ -307,6 +307,46 @@ public class CompatibilityTools
         return output.Split('\n', StringSplitOptions.RemoveEmptyEntries).LastOrDefault();
     }
 
+    public string EnsureWineDirectoryAlias(string aliasName, DirectoryInfo target)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        if (string.IsNullOrWhiteSpace(aliasName) ||
+            aliasName is "." or ".." ||
+            aliasName.Contains('/') ||
+            aliasName.Contains('\\'))
+        {
+            throw new ArgumentException("Wine directory aliases must be a single path component.", nameof(aliasName));
+        }
+
+        target.Create();
+        var driveC = Directory.CreateDirectory(Path.Combine(Settings.Prefix.FullName, "drive_c"));
+        var alias = new DirectoryInfo(Path.Combine(driveC.FullName, aliasName));
+        var normalizedTarget = Path.TrimEndingDirectorySeparator(Path.GetFullPath(target.FullName));
+
+        if (alias.LinkTarget is not null)
+        {
+            var resolvedTarget = alias.ResolveLinkTarget(true)?.FullName;
+            if (resolvedTarget is not null &&
+                string.Equals(
+                    Path.TrimEndingDirectorySeparator(Path.GetFullPath(resolvedTarget)),
+                    normalizedTarget,
+                    StringComparison.Ordinal))
+            {
+                return $@"C:\{aliasName}";
+            }
+
+            // This only removes the launcher-owned link, never its target.
+            alias.Delete();
+        }
+        else if (alias.Exists || File.Exists(alias.FullName))
+        {
+            throw new IOException($"The Wine path alias is occupied by a non-link entry: {alias.FullName}");
+        }
+
+        alias.CreateAsSymbolicLink(normalizedTarget);
+        return $@"C:\{aliasName}";
+    }
+
     public void AddRegistryKey(string key, string value, string data)
     {
         var args = new string[] { "reg", "add", key, "/v", value, "/d", data, "/f" };

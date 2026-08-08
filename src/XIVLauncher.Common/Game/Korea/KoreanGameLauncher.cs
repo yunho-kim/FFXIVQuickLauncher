@@ -65,11 +65,23 @@ public sealed class KoreanGameLauncher
             .Append("SYS.resetConfig", "0")
             .Append("DEV.SaveDataBankHost", SaveDataBankHost);
 
+        var workingDirectory = Path.Combine(gamePath.FullName, "game");
+        var environment = new Dictionary<string, string>();
+        if (runner is IArgumentListGameRunner argumentListRunner)
+        {
+            return argumentListRunner.Start(
+                executablePath,
+                workingDirectory,
+                argumentBuilder.BuildArgumentList(),
+                environment,
+                dpiAwareness);
+        }
+
         return runner.Start(
             executablePath,
-            Path.Combine(gamePath.FullName, "game"),
+            workingDirectory,
             argumentBuilder.Build(),
-            new Dictionary<string, string>(),
+            environment,
             dpiAwareness);
     }
 }

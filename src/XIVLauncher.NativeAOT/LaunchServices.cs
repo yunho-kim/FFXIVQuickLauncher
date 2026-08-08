@@ -293,6 +293,14 @@ public static class LaunchServices
 
     public static Process StartKoreanGameAndAddon(string gameToken, bool dalamudOk)
     {
+        // Dalamud.Injector currently supports the global client languages only and
+        // rejects ClientLanguage.Korean (value 5). Keep this guard in the bridge as
+        // well as the Swift caller so a stale or third-party caller cannot regress
+        // Korean game startup.
+        if (dalamudOk)
+            Log.Warning("[KOREA] Dalamud is not supported for the Korean client; launching without injection");
+        dalamudOk = false;
+
         IDalamudRunner dalamudRunner = Environment.OSVersion.Platform switch
         {
             PlatformID.Win32NT => new WindowsDalamudRunner(Program.DalamudUpdater.Runtime),
@@ -324,8 +332,16 @@ public static class LaunchServices
         else if (Environment.OSVersion.Platform == PlatformID.Unix)
         {
             runner = new UnixGameRunner(Program.CompatibilityTools, dalamudLauncher, dalamudOk);
-            var userPath = Program.CompatibilityTools!.UnixToWinePath(Program.Config.GameConfigPath!.FullName);
-            gameArgs += $" UserPath=\"{userPath}\"";
+            // FFXIV's Korean client rejects UserPath values containing spaces,
+            // even when Wine receives them as one argv entry. Keep the real
+            // macOS config directory and expose it through a prefix-local,
+            // portable Windows path with no host-specific components.
+            var userPath = Program.CompatibilityTools!.EnsureWineDirectoryAlias(
+                "xomkr-config",
+                Program.Config.GameConfigPath!);
+            // KoreanGameLauncher uses IArgumentListGameRunner on Unix, so this
+            // value is preserved as one argv entry without command-line parsing.
+            gameArgs += $" UserPath={userPath}";
         }
         else
         {

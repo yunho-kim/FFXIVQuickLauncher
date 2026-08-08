@@ -104,8 +104,17 @@ public sealed class KoreanLauncherClient : IDisposable
             if (!attributes.TryGetValue("name", out var name) || string.IsNullOrWhiteSpace(name))
                 continue;
 
+            if (HasBooleanAttribute(tag.Value, "disabled"))
+                continue;
+
+            var isCheckable = attributes.TryGetValue("type", out var type)
+                              && (string.Equals(type, "checkbox", StringComparison.OrdinalIgnoreCase)
+                                  || string.Equals(type, "radio", StringComparison.OrdinalIgnoreCase));
+            if (isCheckable && !HasBooleanAttribute(tag.Value, "checked"))
+                continue;
+
             attributes.TryGetValue("value", out var value);
-            form[name] = value ?? string.Empty;
+            form[name] = value ?? (isCheckable ? "on" : string.Empty);
         }
 
         if (!form.ContainsKey("gameServiceID")
@@ -305,6 +314,10 @@ public sealed class KoreanLauncherClient : IDisposable
         if (otpResult.Length != 0)
             throw AuthenticationException(KoreanLauncherStage.Otp, KoreanLauncherError.OtpRejected, "otp_rejected");
 
+        // OTPCheck validates the code, but the official launcher also carries
+        // the accepted value into MakeToken to complete the game session.
+        sessionForm["otpNum"] = otp;
+
         return KoreanLoginResult.Authenticated(sessionForm);
     }
 
@@ -313,9 +326,18 @@ public sealed class KoreanLauncherClient : IDisposable
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(session);
+        var tokenForm = new Dictionary<string, string>(session.Form, StringComparer.Ordinal)
+        {
+            // Match the official launcher's successful-form transition before
+            // requesting the one-time game session token.
+            ["passWord"] = string.Empty,
+            ["InternetCafeType"] = "0",
+            ["decideDX"] = "1",
+            ["decideAS"] = "1",
+        };
         using var response = await PostFormAsync(
             "LauncherFF/MakeToken",
-            session.Form,
+            tokenForm,
             KoreanLauncherStage.Token,
             cancellationToken).ConfigureAwait(false);
         using var json = await ParseJsonAsync(response, KoreanLauncherStage.Token, cancellationToken).ConfigureAwait(false);
@@ -435,6 +457,14 @@ public sealed class KoreanLauncherClient : IDisposable
         }
 
         return attributes;
+    }
+
+    private static bool HasBooleanAttribute(string tag, string attributeName)
+    {
+        return Regex.IsMatch(
+            tag,
+            $@"(?<![\w:-]){Regex.Escape(attributeName)}(?:\s*=\s*(?:""[^""]*""|'[^']*'|[^\s>]+))?(?=\s|/?>)",
+            RegexOptions.IgnoreCase | RegexOptions.Singleline | RegexOptions.CultureInvariant);
     }
 
     private static string GetRequiredScalar(JsonElement json, string propertyName, KoreanLauncherStage stage)

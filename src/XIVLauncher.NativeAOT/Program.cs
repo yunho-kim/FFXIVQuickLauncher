@@ -113,10 +113,10 @@ public class Program
     }
 
     [UnmanagedCallersOnly(EntryPoint = "createCompatToolsInstance")]
-    public static void CreateCompatToolsInstance(nint winePath, nint wineDebugVars, bool esync)
+    public static void CreateCompatToolsInstance(nint winePath, nint wineDebugVars, nint winePrefixPath, bool esync)
     {
         var wineLogFile = new FileInfo(Path.Combine(Storage!.GetFolder("logs").FullName, "wine.log"));
-        var winePrefix = Storage.GetFolder("wineprefix");
+        var winePrefix = new DirectoryInfo(Marshal.PtrToStringUTF8(winePrefixPath)!);
         var wineSettings = new WineSettings(WineStartupType.Custom, Marshal.PtrToStringUTF8(winePath), Marshal.PtrToStringUTF8(wineDebugVars), wineLogFile, winePrefix, esync, false);
         var toolsFolder = Storage.GetFolder("compatibilitytool");
         CompatibilityTools = new CompatibilityTools(wineSettings, DxvkHudType.None, false, true, toolsFolder);

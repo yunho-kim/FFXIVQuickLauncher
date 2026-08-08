@@ -30,9 +30,50 @@ public sealed class KoreanGameLauncherTests
         Assert.IsFalse(runner.Arguments.StartsWith("//**sqex", StringComparison.Ordinal));
     }
 
-    private sealed class RecordingRunner : IGameRunner
+    [TestMethod]
+    public void WineUserPathWithSpacesIsPreservedAsOneArgument()
+    {
+        using var gamePath = new TemporaryGamePath();
+        var runner = new RecordingRunner();
+        const string userPath = @"Z:\Users\Test User\Documents\My Games\FINAL FANTASY XIV - KOREA";
+
+        new KoreanGameLauncher().LaunchGame(
+            runner,
+            "official-token",
+            $"UserPath={userPath}",
+            gamePath.Directory,
+            DpiAwareness.Unaware);
+
+        Assert.IsNotNull(runner.ArgumentList);
+        CollectionAssert.Contains(
+            (System.Collections.ICollection)runner.ArgumentList,
+            $"UserPath={userPath}");
+    }
+
+    [TestMethod]
+    public void PrefixLocalWineUserPathIsPreservedAsOneArgument()
+    {
+        using var gamePath = new TemporaryGamePath();
+        var runner = new RecordingRunner();
+        const string userPath = @"C:\xomkr-config";
+
+        new KoreanGameLauncher().LaunchGame(
+            runner,
+            "official-token",
+            $"UserPath={userPath}",
+            gamePath.Directory,
+            DpiAwareness.Unaware);
+
+        Assert.IsNotNull(runner.ArgumentList);
+        CollectionAssert.Contains(
+            (System.Collections.ICollection)runner.ArgumentList,
+            $"UserPath={userPath}");
+    }
+
+    private sealed class RecordingRunner : IArgumentListGameRunner
     {
         public string? Arguments { get; private set; }
+        public IReadOnlyList<string>? ArgumentList { get; private set; }
 
         public Process? Start(
             string path,
@@ -42,6 +83,18 @@ public sealed class KoreanGameLauncherTests
             DpiAwareness dpiAwareness)
         {
             Arguments = arguments;
+            return null;
+        }
+
+        public Process? Start(
+            string path,
+            string workingDirectory,
+            IReadOnlyList<string> arguments,
+            IDictionary<string, string> environment,
+            DpiAwareness dpiAwareness)
+        {
+            ArgumentList = arguments;
+            Arguments = string.Concat(arguments.Select(argument => $" {argument}"));
             return null;
         }
     }

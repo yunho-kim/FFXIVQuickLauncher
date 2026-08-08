@@ -72,6 +72,13 @@ namespace XIVLauncher.Common.Encryption
                        .ToString();
         }
 
+        public IReadOnlyList<string> BuildArgumentList()
+        {
+            return this.arguments
+                       .Select(part => $"{part.Key}={part.Value}")
+                       .ToArray();
+        }
+
         public string BuildEncrypted(uint key)
         {
             var arguments = this.arguments.Aggregate(new StringBuilder(),

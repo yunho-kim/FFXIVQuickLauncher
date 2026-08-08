@@ -18,6 +18,10 @@ public sealed class KoreanLauncherClientTests
         <input value="0" name="BDC_BackWorkaround_LauncherLoginCaptcha">
         <input value="fixture-hash" name="BDC_Hs_LauncherLoginCaptcha">
         <input value="262452672" name="BDC_SP_LauncherLoginCaptcha">
+        <input type="checkbox" name="setting_update" value="true" checked>
+        <input type="checkbox" name="setting_dx11" value="true">
+        <input type="checkbox" name="setting_reset" value="true">
+        <input type="checkbox" name="disabled_setting" value="true" checked disabled>
         <img id="LauncherLoginCaptcha_CaptchaImage" src="/captcha.png">
         </form><script>externalFN("SetType", { nType : 689014 });</script></body></html>
         """;
@@ -26,6 +30,7 @@ public sealed class KoreanLauncherClientTests
     public async Task LoginOtpAndTokenUseOneValidatedSession()
     {
         Dictionary<string, string>? loginForm = null;
+        Dictionary<string, string>? otpForm = null;
         Dictionary<string, string>? tokenForm = null;
         var handler = new FixtureHandler(
             _ => TextResponse(LoginHtml, "text/html"),
@@ -37,7 +42,11 @@ public sealed class KoreanLauncherClientTests
                     {"result":"0","loginResult":"O","motpUse":"O","motpID":"fixture-motp-id","memberID":"fixture-user","memberKey":"fixture-key","csiteNo":"0"}
                     """, "application/json");
             },
-            _ => TextResponse("{\"Result\":\"\"}", "application/json"),
+            async request =>
+            {
+                otpForm = await ReadFormAsync(request);
+                return await TextResponse("{\"Result\":\"\"}", "application/json");
+            },
             async request =>
             {
                 tokenForm = await ReadFormAsync(request);
@@ -58,8 +67,21 @@ public sealed class KoreanLauncherClientTests
         Assert.AreEqual("game-token", token);
         Assert.AreEqual("password-sentinel", loginForm!["passWord"]);
         Assert.AreEqual("abcde", loginForm["CaptchaCode"]);
+        Assert.AreEqual("true", loginForm["setting_update"]);
+        Assert.IsFalse(loginForm.ContainsKey("setting_dx11"));
+        Assert.IsFalse(loginForm.ContainsKey("setting_reset"));
+        Assert.IsFalse(loginForm.ContainsKey("disabled_setting"));
+        Assert.AreEqual("1234567", otpForm!["otpNum"]);
+        Assert.IsFalse(otpForm.ContainsKey("passWord"));
+        Assert.IsFalse(otpForm.ContainsKey("CaptchaCode"));
         Assert.AreEqual("fixture-key", tokenForm!["memberKey"]);
-        Assert.AreEqual("password-sentinel", tokenForm["passWord"]);
+        Assert.AreEqual(string.Empty, tokenForm["passWord"]);
+        Assert.AreEqual("0", tokenForm["InternetCafeType"]);
+        Assert.AreEqual("1", tokenForm["decideDX"]);
+        Assert.AreEqual("1", tokenForm["decideAS"]);
+        Assert.AreEqual("false", tokenForm["checkMemberID"]);
+        Assert.AreEqual("1234567", tokenForm["otpNum"]);
+        Assert.IsFalse(tokenForm.Values.Contains("password-sentinel"));
     }
 
     [TestMethod]
@@ -107,6 +129,32 @@ public sealed class KoreanLauncherClientTests
 
         Assert.AreEqual(KoreanLoginStatus.Authenticated, authenticated.Status);
         Assert.AreEqual(string.Empty, otpForm!["motpID"]);
+    }
+
+    [TestMethod]
+    public async Task RejectedOtpCanRetryTheSameChallenge()
+    {
+        var handler = new FixtureHandler(
+            _ => TextResponse(LoginHtml, "text/html"),
+            _ => CaptchaResponse(),
+            _ => TextResponse(
+                """{"result":"0","loginResult":"O","motpUse":"O","motpID":"fixture-motp-id","memberID":"fixture-user","memberKey":"fixture-key","csiteNo":"0"}""",
+                "application/json"),
+            _ => TextResponse("{\"Result\":\"invalid OTP\"}", "application/json"),
+            _ => TextResponse("{\"Result\":\"\"}", "application/json"));
+
+        using var client = CreateClient(handler);
+        var captcha = await client.PrepareLoginAsync(CancellationToken.None);
+        var login = await client.LoginAsync(
+            captcha, "fixture-user", "password", "abcde", CancellationToken.None);
+
+        var exception = await Assert.ThrowsExactlyAsync<KoreanLauncherException>(() =>
+            client.SubmitOtpAsync(login.OtpChallenge!, "1111111", CancellationToken.None));
+        Assert.AreEqual(KoreanLauncherError.OtpRejected, exception.Error);
+
+        var authenticated = await client.SubmitOtpAsync(
+            login.OtpChallenge!, "2222222", CancellationToken.None);
+        Assert.AreEqual(KoreanLoginStatus.Authenticated, authenticated.Status);
     }
 
     [TestMethod]
