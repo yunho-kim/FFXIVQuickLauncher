@@ -46,7 +46,9 @@ public class WindowsDalamudRunner : IDalamudRunner
             DalamudInjectorArgs.LoggingPath(dalamudStartInfo.LoggingPath),
             DalamudInjectorArgs.PluginDirectory(dalamudStartInfo.PluginDirectory),
             DalamudInjectorArgs.AssetDirectory(dalamudStartInfo.AssetDirectory),
-            DalamudInjectorArgs.ClientLanguage((int)dalamudStartInfo.Language),
+            dalamudStartInfo.Language == ClientLanguage.Korean
+                ? DalamudInjectorArgs.ClientLanguage("korean")
+                : DalamudInjectorArgs.ClientLanguage((int)dalamudStartInfo.Language),
             DalamudInjectorArgs.DelayInitialize(dalamudStartInfo.DelayInitializeMs),
             DalamudInjectorArgs.TsPackB64(Convert.ToBase64String(Encoding.UTF8.GetBytes(dalamudStartInfo.TroubleshootingPackData))),
         };

@@ -96,7 +96,7 @@ internal static class KoreanInteropService
         });
     }
 
-    public static string StartGame(bool dalamudOk)
+    public static string StartGame(bool dalamudOk, bool noPlugins)
     {
         return RunSerialized(async () =>
         {
@@ -107,7 +107,7 @@ internal static class KoreanInteropService
             Process process;
             try
             {
-                process = LaunchServices.StartKoreanGameAndAddon(token, dalamudOk);
+                process = LaunchServices.StartKoreanGameAndAddon(token, dalamudOk, noPlugins);
             }
             finally
             {

@@ -30,6 +30,9 @@ namespace XIVLauncher.Common.Dalamud
         [JsonPropertyName("downloadUrl")]
         public string DownloadUrl { get; set; }
 
+        [JsonPropertyName("hash")]
+        public string? Hash { get; set; }
+
         public static DalamudVersionInfo Load(FileInfo file) =>
             JsonSerializer.Deserialize(File.ReadAllText(file.FullName), DalamudJsonContext.Default.DalamudVersionInfo);
     }

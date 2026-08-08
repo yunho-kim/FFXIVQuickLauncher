@@ -41,11 +41,18 @@ public class UnixGameRunner : IArgumentListGameRunner
         IDictionary<string, string> environment,
         DpiAwareness dpiAwareness)
     {
+        if (dalamudOk)
+        {
+            return this.dalamudLauncher.Run(
+                new FileInfo(path),
+                string.Join(" ", arguments),
+                environment);
+        }
+
         // The Korean client uses an unencrypted UserPath argument. Passing a
         // command-line string makes paths containing spaces depend on two
-        // separate parsers (.NET and Wine). ArgumentList keeps every key/value
-        // pair intact all the way to Wine. Dalamud is intentionally disabled
-        // for Korean launches, so this structured path starts Wine directly.
+        // separate parsers (.NET and Wine). When Dalamud is disabled,
+        // ArgumentList keeps every key/value pair intact all the way to Wine.
         var wineArguments = new string[arguments.Count + 1];
         wineArguments[0] = path;
         for (var i = 0; i < arguments.Count; i++)

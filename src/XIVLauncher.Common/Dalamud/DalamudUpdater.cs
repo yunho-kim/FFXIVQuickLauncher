@@ -22,6 +22,7 @@ namespace XIVLauncher.Common.Dalamud
         private readonly DirectoryInfo addonDirectory;
         private readonly DirectoryInfo assetRootDirectory;
         private readonly IUniqueIdCache? cache;
+        private readonly DalamudReleaseSource releaseSource;
 
         private readonly TimeSpan defaultTimeout = TimeSpan.FromMinutes(15);
 
@@ -32,6 +33,8 @@ namespace XIVLauncher.Common.Dalamud
         public bool IsStaging { get; private set; } = false;
 
         public Exception? EnsurementException { get; private set; }
+
+        public string? CompatibilityWarning { get; private set; }
 
         private FileInfo? runnerInternal;
 
@@ -88,7 +91,13 @@ namespace XIVLauncher.Common.Dalamud
             NoIntegrity, // fail with error message
         }
 
-        public DalamudUpdater(DirectoryInfo addonDirectory, DirectoryInfo runtimeDirectory, DirectoryInfo assetRootDirectory, IUniqueIdCache? cache, string? dalamudRolloutBucket)
+        public DalamudUpdater(
+            DirectoryInfo addonDirectory,
+            DirectoryInfo runtimeDirectory,
+            DirectoryInfo assetRootDirectory,
+            IUniqueIdCache? cache,
+            string? dalamudRolloutBucket,
+            DalamudReleaseSource? releaseSource = null)
         {
             this.addonDirectory = addonDirectory;
             this.assetRootDirectory = assetRootDirectory;
@@ -96,6 +105,7 @@ namespace XIVLauncher.Common.Dalamud
             this.Runtime = runtimeDirectory;
             this.AssetDirectory = null;
             this.cache = cache;
+            this.releaseSource = releaseSource ?? DalamudReleaseSource.Global;
 
             this.RolloutBucket = dalamudRolloutBucket;
 
@@ -128,20 +138,29 @@ namespace XIVLauncher.Common.Dalamud
 
         public void Run(string? betaKind, string? betaKey, bool overrideForceProxy = false)
         {
+            if (this.State == DownloadState.Running)
+            {
+                Log.Information("[DUPDATE] An update is already running; ignoring the duplicate request.");
+                return;
+            }
+
             Log.Information("[DUPDATE] Starting... (forceProxy: {ForceProxy})", overrideForceProxy);
             this.State = DownloadState.Running;
 
             this.forceProxy = overrideForceProxy;
 
             this.ResolvedBranch = null;
+            this.EnsurementException = null;
+            this.CompatibilityWarning = null;
+            this.IsStaging = false;
 
             Task.Run(async () =>
             {
-                const int MAX_TRIES = 10;
+                var maxTries = this.releaseSource == DalamudReleaseSource.Korean ? 3 : 10;
 
                 var isUpdated = false;
 
-                for (var tries = 0; tries < MAX_TRIES; tries++)
+                for (var tries = 0; tries < maxTries; tries++)
                 {
                     try
                     {
@@ -151,7 +170,7 @@ namespace XIVLauncher.Common.Dalamud
                     }
                     catch (Exception ex)
                     {
-                        Log.Error(ex, "[DUPDATE] Update failed, try {TryCnt}/{MaxTries}...", tries, MAX_TRIES);
+                        Log.Error(ex, "[DUPDATE] Update failed, try {TryCnt}/{MaxTries}...", tries + 1, maxTries);
                         this.EnsurementException = ex;
                         this.forceProxy = true;
                     }
@@ -172,7 +191,20 @@ namespace XIVLauncher.Common.Dalamud
             var info = DalamudVersionInfo.Load(new FileInfo(Path.Combine(this.Runner.DirectoryName!,
                 "version.json")));
 
-            return Repository.Ffxiv.GetVer(gamePath) == info.SupportedGameVer;
+            var gameVersion = Repository.Ffxiv.GetVer(gamePath);
+            if (gameVersion == info.SupportedGameVer)
+                return true;
+
+            this.CompatibilityWarning =
+                $"The installed game version ({gameVersion}) differs from the Korean Dalamud manifest ({info.SupportedGameVer}).";
+
+            if (!this.releaseSource.EnforceSupportedGameVersion)
+            {
+                Log.Warning("[DUPDATE] {CompatibilityWarning} Continuing because the Korean updater treats this as advisory.", this.CompatibilityWarning);
+                return true;
+            }
+
+            return false;
         }
 
         private static string GetBetaTrackName(string betaKind) =>
@@ -188,7 +220,20 @@ namespace XIVLauncher.Common.Dalamud
             client.DefaultRequestHeaders.CacheControl = new CacheControlHeaderValue
             {
                 NoCache = true,
+                NoStore = this.releaseSource == DalamudReleaseSource.Korean,
             };
+
+            if (this.releaseSource.VersionInfoUrl != null)
+            {
+                client.DefaultRequestHeaders.UserAgent.ParseAdd("XIV-on-Mac-KR/1.0");
+                var koreanJson = await client.GetStringAsync(this.releaseSource.VersionInfoUrl).ConfigureAwait(false);
+                var koreanInfo = JsonSerializer.Deserialize(koreanJson, DalamudJsonContext.Default.DalamudVersionInfo)
+                    ?? throw new DalamudIntegrityException("The Korean Dalamud manifest was empty.");
+
+                ValidateVersionInfo(koreanInfo);
+                this.releaseSource.ValidateDalamudDownloadUrl(koreanInfo.DownloadUrl);
+                return (koreanInfo, null);
+            }
 
             var versionInfoJsonRelease = await client.GetStringAsync(DalamudLauncher.REMOTE_BASE + $"release&bucket={this.RolloutBucket}").ConfigureAwait(false);
 
@@ -205,6 +250,17 @@ namespace XIVLauncher.Common.Dalamud
             }
 
             return (versionInfoRelease, versionInfoStaging);
+        }
+
+        private static void ValidateVersionInfo(DalamudVersionInfo versionInfo)
+        {
+            if (string.IsNullOrWhiteSpace(versionInfo.AssemblyVersion)
+                || string.IsNullOrWhiteSpace(versionInfo.SupportedGameVer)
+                || string.IsNullOrWhiteSpace(versionInfo.RuntimeVersion)
+                || string.IsNullOrWhiteSpace(versionInfo.DownloadUrl))
+            {
+                throw new DalamudIntegrityException("The Dalamud manifest is missing required fields.");
+            }
         }
 
         private async Task UpdateDalamud(string? betaKind, string? betaKey)
@@ -241,7 +297,7 @@ namespace XIVLauncher.Common.Dalamud
                 new(Path.Combine(this.Runtime.FullName, "shared", "Microsoft.WindowsDesktop.App", remoteVersionInfo.RuntimeVersion)),
             };
 
-            if (!currentVersionPath.Exists || !IsIntegrity(currentVersionPath))
+            if (!currentVersionPath.Exists || !IsIntegrity(currentVersionPath, remoteVersionInfo.Hash))
             {
                 Log.Information("[DUPDATE] Not found, redownloading");
 
@@ -250,7 +306,7 @@ namespace XIVLauncher.Common.Dalamud
                 try
                 {
                     await DownloadDalamud(currentVersionPath, remoteVersionInfo).ConfigureAwait(true);
-                    CleanUpOld(addonPath, remoteVersionInfo.AssemblyVersion);
+                    CleanUpOld(addonPath, remoteVersionInfo.AssemblyVersion, this.releaseSource == DalamudReleaseSource.Korean);
 
                     // This is a good indicator that we should clear the UID cache
                     cache?.Reset();
@@ -280,7 +336,9 @@ namespace XIVLauncher.Common.Dalamud
                 {
                     try
                     {
-                        isRuntimeIntegrity = await CheckRuntimeHashes(Runtime, localVersion).ConfigureAwait(false);
+                        isRuntimeIntegrity = this.releaseSource.UseOfficialMicrosoftRuntime
+                            ? CheckKoreanRuntimeIntegrity(Runtime, localVersion)
+                            : await CheckRuntimeHashes(Runtime, localVersion).ConfigureAwait(false);
                     }
                     catch (Exception ex)
                     {
@@ -297,8 +355,13 @@ namespace XIVLauncher.Common.Dalamud
                     try
                     {
                         Log.Verbose("[DUPDATE] Now download runtime...");
-                        await DownloadRuntime(this.Runtime, remoteVersionInfo.RuntimeVersion).ConfigureAwait(false);
-                        File.WriteAllText(versionFile.FullName, remoteVersionInfo.RuntimeVersion);
+                        if (this.releaseSource.UseOfficialMicrosoftRuntime)
+                            await DownloadKoreanRuntime(this.Runtime, remoteVersionInfo.RuntimeVersion).ConfigureAwait(false);
+                        else
+                        {
+                            await DownloadRuntime(this.Runtime, remoteVersionInfo.RuntimeVersion).ConfigureAwait(false);
+                            File.WriteAllText(versionFile.FullName, remoteVersionInfo.RuntimeVersion);
+                        }
                     }
                     catch (Exception ex)
                     {
@@ -315,7 +378,9 @@ namespace XIVLauncher.Common.Dalamud
             {
                 this.SetOverlayProgress(IDalamudLoadingOverlay.DalamudUpdateStep.Assets);
                 this.ReportOverlayProgress(null, 0, null);
-                var assetResult = await AssetManager.EnsureAssets(this, this.assetRootDirectory).ConfigureAwait(true);
+                var assetResult = this.releaseSource.UseKoreanAssets
+                    ? await AssetManager.EnsureKoreanAssets(this, this.assetRootDirectory).ConfigureAwait(true)
+                    : await AssetManager.EnsureAssets(this, this.assetRootDirectory).ConfigureAwait(true);
                 AssetDirectory = assetResult.AssetDir;
                 assetVer = assetResult.Version;
             }
@@ -324,7 +389,7 @@ namespace XIVLauncher.Common.Dalamud
                 throw new DalamudIntegrityException("Could not ensure assets", ex);
             }
 
-            if (!IsIntegrity(currentVersionPath))
+            if (!IsIntegrity(currentVersionPath, remoteVersionInfo.Hash))
             {
                 throw new DalamudIntegrityException("No integrity after ensurement");
             }
@@ -353,7 +418,7 @@ namespace XIVLauncher.Common.Dalamud
             return true;
         }
 
-        private static bool IsIntegrity(DirectoryInfo addonPath)
+        private static bool IsIntegrity(DirectoryInfo addonPath, string? expectedHashesHash = null)
         {
             var files = addonPath.GetFiles();
 
@@ -375,6 +440,21 @@ namespace XIVLauncher.Common.Dalamud
                     return false;
                 }
 
+                if (!string.IsNullOrWhiteSpace(expectedHashesHash))
+                {
+                    using var hashesStream = File.OpenRead(hashesPath);
+                    using var hashesMd5 = MD5.Create();
+                    var actualHashesHash = Convert.ToHexString(hashesMd5.ComputeHash(hashesStream));
+                    if (!string.Equals(actualHashesHash, expectedHashesHash, StringComparison.OrdinalIgnoreCase))
+                    {
+                        Log.Error(
+                            "[DUPDATE] hashes.json integrity check failed ({Expected} - {Actual})",
+                            expectedHashesHash,
+                            actualHashesHash);
+                        return false;
+                    }
+                }
+
                 return CheckIntegrity(addonPath, File.ReadAllText(hashesPath));
             }
             catch (Exception ex)
@@ -384,7 +464,7 @@ namespace XIVLauncher.Common.Dalamud
             }
         }
 
-        private static bool CheckIntegrity(DirectoryInfo directory, string hashesJson)
+        internal static bool CheckIntegrity(DirectoryInfo directory, string hashesJson)
         {
             try
             {
@@ -392,15 +472,18 @@ namespace XIVLauncher.Common.Dalamud
 
                 var hashes = JsonSerializer.Deserialize(hashesJson, DalamudJsonContext.Default.DictionaryStringString);
 
+                if (hashes == null || hashes.Count == 0)
+                    return false;
+
                 foreach (var hash in hashes)
                 {
-                    var file = Path.Combine(directory.FullName, hash.Key.Replace("\\", "/"));
+                    var file = ResolvePathUnderRoot(directory, hash.Key);
                     using var fileStream = File.OpenRead(file);
                     using var md5 = MD5.Create();
 
                     var hashed = BitConverter.ToString(md5.ComputeHash(fileStream)).ToUpperInvariant().Replace("-", string.Empty);
 
-                    if (hashed != hash.Value)
+                    if (!string.Equals(hashed, hash.Value, StringComparison.OrdinalIgnoreCase))
                     {
                         Log.Error("[DUPDATE] Integrity check failed for {0} ({1} - {2})", file, hash.Value, hashed);
                         return false;
@@ -418,7 +501,28 @@ namespace XIVLauncher.Common.Dalamud
             return true;
         }
 
-        private static void CleanUpOld(DirectoryInfo addonPath, string currentVer)
+        internal static string ResolvePathUnderRoot(DirectoryInfo root, string relativePath)
+        {
+            if (string.IsNullOrWhiteSpace(relativePath) || Path.IsPathRooted(relativePath))
+                throw new DalamudIntegrityException("A Dalamud package contained an invalid path.");
+
+            var normalizedRelativePath = relativePath.Replace('\\', Path.DirectorySeparatorChar)
+                                                     .Replace('/', Path.DirectorySeparatorChar);
+            var rootPath = Path.GetFullPath(root.FullName)
+                               .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                           + Path.DirectorySeparatorChar;
+            var candidatePath = Path.GetFullPath(Path.Combine(rootPath, normalizedRelativePath));
+            var comparison = OperatingSystem.IsWindows()
+                ? StringComparison.OrdinalIgnoreCase
+                : StringComparison.Ordinal;
+
+            if (!candidatePath.StartsWith(rootPath, comparison))
+                throw new DalamudIntegrityException("A Dalamud package attempted to write outside its cache.");
+
+            return candidatePath;
+        }
+
+        private static void CleanUpOld(DirectoryInfo addonPath, string currentVer, bool keepPrevious)
         {
             if (GameHelpers.CheckIsGameOpen())
                 return;
@@ -426,10 +530,13 @@ namespace XIVLauncher.Common.Dalamud
             if (!addonPath.Exists)
                 return;
 
-            foreach (var directory in addonPath.GetDirectories())
-            {
-                if (directory.Name == "dev" || directory.Name == currentVer) continue;
+            var oldDirectories = addonPath.GetDirectories()
+                .Where(directory => directory.Name != "dev" && directory.Name != currentVer)
+                .OrderByDescending(directory => directory.LastWriteTimeUtc)
+                .ToArray();
 
+            foreach (var directory in keepPrevious ? oldDirectories.Skip(1) : oldDirectories)
+            {
                 try
                 {
                     directory.Delete(true);
@@ -448,35 +555,81 @@ namespace XIVLauncher.Common.Dalamud
 
         private async Task DownloadDalamud(DirectoryInfo addonPath, DalamudVersionInfo version)
         {
-            // Ensure directory exists
-            if (!addonPath.Exists)
-                addonPath.Create();
-            else
-            {
-                addonPath.Delete(true);
-                addonPath.Create();
-            }
-
             var downloadPath = PlatformHelpers.GetTempFileName();
-
-            if (File.Exists(downloadPath))
-                File.Delete(downloadPath);
-
-            await this.DownloadFile(version.DownloadUrl, downloadPath, this.defaultTimeout).ConfigureAwait(false);
-            ZipFile.ExtractToDirectory(downloadPath, addonPath.FullName);
-
-            File.Delete(downloadPath);
+            var stagingPath = new DirectoryInfo(
+                Path.Combine(addonPath.Parent!.FullName, $".{addonPath.Name}.staging-{Guid.NewGuid():N}"));
+            DirectoryInfo? backupPath = null;
 
             try
             {
-                var devPath = new DirectoryInfo(Path.Combine(addonPath.FullName, "..", "dev"));
+                stagingPath.Create();
+                await this.DownloadFile(version.DownloadUrl, downloadPath, this.defaultTimeout).ConfigureAwait(false);
+                ExtractZipSafely(downloadPath, stagingPath);
 
-                PlatformHelpers.DeleteAndRecreateDirectory(devPath);
-                PlatformHelpers.CopyFilesRecursively(addonPath, devPath);
+                if (!IsIntegrity(stagingPath, version.Hash))
+                    throw new DalamudIntegrityException("The downloaded Korean Dalamud package failed integrity verification.");
+
+                if (addonPath.Exists)
+                {
+                    backupPath = new DirectoryInfo(
+                        Path.Combine(addonPath.Parent.FullName, $".{addonPath.Name}.backup-{Guid.NewGuid():N}"));
+                    Directory.Move(addonPath.FullName, backupPath.FullName);
+                }
+
+                Directory.Move(stagingPath.FullName, addonPath.FullName);
+                try
+                {
+                    backupPath?.Delete(true);
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning(ex, "[DUPDATE] Could not remove the replaced Dalamud cache.");
+                }
+
+                try
+                {
+                    var devPath = new DirectoryInfo(Path.Combine(addonPath.FullName, "..", "dev"));
+                    PlatformHelpers.DeleteAndRecreateDirectory(devPath);
+                    PlatformHelpers.CopyFilesRecursively(addonPath, devPath);
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning(ex, "[DUPDATE] Could not refresh the Dalamud development cache.");
+                }
             }
-            catch (Exception ex)
+            catch
             {
-                Log.Error(ex, "[DUPDATE] Could not copy to dev folder.");
+                if (!addonPath.Exists && backupPath?.Exists == true)
+                    Directory.Move(backupPath.FullName, addonPath.FullName);
+                throw;
+            }
+            finally
+            {
+                if (File.Exists(downloadPath))
+                    File.Delete(downloadPath);
+                if (stagingPath.Exists)
+                    stagingPath.Delete(true);
+            }
+        }
+
+        private static void ExtractZipSafely(string archivePath, DirectoryInfo destination)
+        {
+            using var archive = ZipFile.OpenRead(archivePath);
+            foreach (var entry in archive.Entries)
+            {
+                if (string.IsNullOrEmpty(entry.FullName))
+                    continue;
+
+                var targetPath = ResolvePathUnderRoot(destination, entry.FullName);
+                if (entry.FullName.EndsWith("/", StringComparison.Ordinal)
+                    || entry.FullName.EndsWith("\\", StringComparison.Ordinal))
+                {
+                    Directory.CreateDirectory(targetPath);
+                    continue;
+                }
+
+                Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
+                entry.ExtractToFile(targetPath, true);
             }
         }
 
@@ -488,7 +641,7 @@ namespace XIVLauncher.Common.Dalamud
             try
             {
                 if (versionFile.Exists)
-                    localVersion = File.ReadAllText(versionFile.FullName);
+                    localVersion = File.ReadAllText(versionFile.FullName).Trim();
             }
             catch (Exception ex)
             {
@@ -559,6 +712,139 @@ namespace XIVLauncher.Common.Dalamud
             ZipFile.ExtractToDirectory(downloadPath, runtimePath.FullName);
 
             File.Delete(downloadPath);
+        }
+
+        private async Task DownloadKoreanRuntime(DirectoryInfo runtimePath, string version)
+        {
+            version = ValidateRuntimeVersion(version);
+
+            var runtimeUrl = $"https://builds.dotnet.microsoft.com/dotnet/Runtime/{version}/dotnet-runtime-{version}-win-x64.zip";
+            var desktopUrl = $"https://builds.dotnet.microsoft.com/dotnet/WindowsDesktop/{version}/windowsdesktop-runtime-{version}-win-x64.zip";
+            var downloadPath = PlatformHelpers.GetTempFileName();
+            var parentPath = runtimePath.Parent
+                ?? throw new DalamudIntegrityException("The runtime cache has no parent directory.");
+            var stagingPath = new DirectoryInfo(
+                Path.Combine(parentPath.FullName, $".{runtimePath.Name}.staging-{Guid.NewGuid():N}"));
+            DirectoryInfo? backupPath = null;
+
+            try
+            {
+                stagingPath.Create();
+
+                await this.DownloadFileWithSha512(runtimeUrl, downloadPath).ConfigureAwait(false);
+                ExtractZipSafely(downloadPath, stagingPath);
+
+                await this.DownloadFileWithSha512(desktopUrl, downloadPath).ConfigureAwait(false);
+                ExtractZipSafely(downloadPath, stagingPath);
+
+                var requiredPaths = new[]
+                {
+                    Path.Combine(stagingPath.FullName, "host", "fxr", version),
+                    Path.Combine(stagingPath.FullName, "shared", "Microsoft.NETCore.App", version),
+                    Path.Combine(stagingPath.FullName, "shared", "Microsoft.WindowsDesktop.App", version),
+                };
+                if (requiredPaths.Any(path => !Directory.Exists(path)))
+                    throw new DalamudIntegrityException("The downloaded Microsoft runtime package was incomplete.");
+
+                File.WriteAllText(Path.Combine(stagingPath.FullName, "version"), version);
+
+                if (runtimePath.Exists)
+                {
+                    backupPath = new DirectoryInfo(
+                        Path.Combine(parentPath.FullName, $".{runtimePath.Name}.backup-{Guid.NewGuid():N}"));
+                    Directory.Move(runtimePath.FullName, backupPath.FullName);
+                }
+
+                Directory.Move(stagingPath.FullName, runtimePath.FullName);
+                if (backupPath?.Exists == true)
+                    backupPath.Delete(true);
+            }
+            catch
+            {
+                if (!runtimePath.Exists && backupPath?.Exists == true)
+                    Directory.Move(backupPath.FullName, runtimePath.FullName);
+                throw;
+            }
+            finally
+            {
+                if (File.Exists(downloadPath))
+                    File.Delete(downloadPath);
+                if (stagingPath.Exists)
+                    stagingPath.Delete(true);
+            }
+        }
+
+        internal static string ValidateRuntimeVersion(string version)
+        {
+            var segments = version.Split('.');
+            if (segments.Length is < 2 or > 4
+                || segments.Any(segment => segment.Length == 0 || segment.Any(character => !char.IsDigit(character)))
+                || !Version.TryParse(version, out var parsedVersion)
+                || parsedVersion.Major <= 0)
+            {
+                throw new DalamudIntegrityException("The Korean Dalamud manifest contained an invalid runtime version.");
+            }
+
+            return version;
+        }
+
+        internal static bool CheckKoreanRuntimeIntegrity(DirectoryInfo runtimePath, string version)
+        {
+            try
+            {
+                version = ValidateRuntimeVersion(version);
+                var versionFile = new FileInfo(Path.Combine(runtimePath.FullName, "version"));
+                if (!versionFile.Exists
+                    || !string.Equals(File.ReadAllText(versionFile.FullName).Trim(), version, StringComparison.Ordinal))
+                {
+                    return false;
+                }
+
+                var requiredFiles = new[]
+                {
+                    new FileInfo(Path.Combine(runtimePath.FullName, "dotnet.exe")),
+                    new FileInfo(Path.Combine(runtimePath.FullName, "host", "fxr", version, "hostfxr.dll")),
+                    new FileInfo(Path.Combine(runtimePath.FullName, "shared", "Microsoft.NETCore.App", version, "coreclr.dll")),
+                    new FileInfo(Path.Combine(runtimePath.FullName, "shared", "Microsoft.WindowsDesktop.App", version, "PresentationFramework.dll")),
+                };
+
+                return requiredFiles.All(file => file.Exists && file.Length > 0);
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "[DUPDATE] The Korean Microsoft runtime cache failed its layout check.");
+                return false;
+            }
+        }
+
+        private async Task DownloadFileWithSha512(string url, string downloadPath)
+        {
+            var hashPath = PlatformHelpers.GetTempFileName();
+            try
+            {
+                await this.DownloadFile(url + ".sha512", hashPath, this.defaultTimeout).ConfigureAwait(false);
+                var expectedHash = File.ReadAllText(hashPath)
+                    .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+                    .FirstOrDefault();
+                if (expectedHash == null
+                    || expectedHash.Length != 128
+                    || expectedHash.Any(character => !char.IsAsciiHexDigit(character)))
+                {
+                    throw new DalamudIntegrityException("The Microsoft runtime checksum response was invalid.");
+                }
+
+                await this.DownloadFile(url, downloadPath, this.defaultTimeout).ConfigureAwait(false);
+                using var file = File.OpenRead(downloadPath);
+                using var sha512 = SHA512.Create();
+                var actualHash = Convert.ToHexString(sha512.ComputeHash(file));
+                if (!string.Equals(actualHash, expectedHash, StringComparison.OrdinalIgnoreCase))
+                    throw new DalamudIntegrityException("The Microsoft runtime package failed SHA-512 verification.");
+            }
+            finally
+            {
+                if (File.Exists(hashPath))
+                    File.Delete(hashPath);
+            }
         }
 
         public async Task DownloadFile(string url, string path, TimeSpan timeout)

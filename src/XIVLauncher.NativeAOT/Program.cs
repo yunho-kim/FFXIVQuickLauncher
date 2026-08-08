@@ -39,7 +39,7 @@ public class Program
     public static Storage? Storage { get; private set; }
     public static LauncherConfig? Config { get; private set; }
     public static CommonSettings? CommonSettings => CommonSettings.Instance;
-    public static DirectoryInfo DotnetRuntime => Storage!.GetFolder("runtime");
+    public static DirectoryInfo DotnetRuntime => DalamudUpdater?.Runtime ?? Storage!.GetFolder("runtime-korea");
     public static string? FrontierUrl { get; private set; }
     public static ISteam? Steam { get; private set; }
     public static DalamudUpdater? DalamudUpdater { get; private set; }
@@ -95,7 +95,13 @@ public class Program
         }
 
         var dalamudLoadInfo = new DalamudOverlayInfoProxy();
-        DalamudUpdater = new DalamudUpdater(Storage.GetFolder("dalamud"), Storage.GetFolder("runtime"), Storage.GetFolder("dalamudAssets"), null, "Control")
+        DalamudUpdater = new DalamudUpdater(
+            Storage.GetFolder("dalamud-korea"),
+            Storage.GetFolder("runtime-korea"),
+            Storage.GetFolder("dalamudAssets-korea"),
+            null,
+            "Control",
+            DalamudReleaseSource.Korean)
         {
             Overlay = dalamudLoadInfo
         };
@@ -241,9 +247,9 @@ public class Program
     }
 
     [UnmanagedCallersOnly(EntryPoint = "koreanStartGame")]
-    public static nint KoreanStartGame(bool dalamudOk)
+    public static nint KoreanStartGame(bool dalamudOk, bool noPlugins)
     {
-        return MarshalUtf8.StringToHGlobal(KoreanInteropService.StartGame(dalamudOk));
+        return MarshalUtf8.StringToHGlobal(KoreanInteropService.StartGame(dalamudOk, noPlugins));
     }
 
     [UnmanagedCallersOnly(EntryPoint = "koreanResetSession")]

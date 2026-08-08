@@ -17,6 +17,8 @@ namespace XIVLauncher.Common.Dalamud
     public class AssetManager
     {
         private const string ASSET_STORE_URL = "https://kamori.goats.dev/Dalamud/Asset/Meta?appId=xom";
+        private const string KOREAN_ASSET_STORE_URL =
+            "https://raw.githubusercontent.com/goatcorp/DalamudAssets/refs/heads/master/asset.json";
 
         internal class AssetInfo
         {
@@ -156,6 +158,88 @@ namespace XIVLauncher.Common.Dalamud
             return (currentDir, info.Version);
         }
 
+        public static async Task<(DirectoryInfo AssetDir, int Version)> EnsureKoreanAssets(
+            DalamudUpdater updater,
+            DirectoryInfo baseDir)
+        {
+            using var client = new HttpClient
+            {
+                Timeout = TimeSpan.FromMinutes(10),
+            };
+            client.DefaultRequestHeaders.CacheControl = new CacheControlHeaderValue
+            {
+                NoCache = true,
+                NoStore = true,
+            };
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("XIV-on-Mac-KR/1.0");
+
+            var json = await client.GetStringAsync(KOREAN_ASSET_STORE_URL).ConfigureAwait(false);
+            var info = JsonSerializer.Deserialize(json, AssetInfoJsonContext.Default.AssetInfo)
+                ?? throw new DalamudIntegrityException("The Dalamud asset manifest was empty.");
+            if (info.Version <= 0 || info.Assets == null || info.Assets.Count == 0)
+                throw new DalamudIntegrityException("The Dalamud asset manifest was invalid.");
+
+            var currentDir = new DirectoryInfo(Path.Combine(baseDir.FullName, info.Version.ToString()));
+            currentDir.Create();
+
+            foreach (var entry in info.Assets)
+            {
+                var targetPath = DalamudUpdater.ResolvePathUnderRoot(currentDir, entry.FileName);
+                if (File.Exists(targetPath) && HashMatches(targetPath, entry.Hash))
+                    continue;
+
+                ValidateKoreanAssetUrl(entry.Url);
+                var downloadPath = PlatformHelpers.GetTempFileName();
+                try
+                {
+                    await updater.DownloadFile(entry.Url, downloadPath, TimeSpan.FromMinutes(10)).ConfigureAwait(false);
+                    if (!HashMatches(downloadPath, entry.Hash))
+                        throw new DalamudIntegrityException($"Dalamud asset integrity failed for {entry.FileName}.");
+
+                    Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
+                    File.Move(downloadPath, targetPath, true);
+                }
+                finally
+                {
+                    if (File.Exists(downloadPath))
+                        File.Delete(downloadPath);
+                }
+            }
+
+            var devDir = new DirectoryInfo(Path.Combine(baseDir.FullName, "dev"));
+            PlatformHelpers.DeleteAndRecreateDirectory(devDir);
+            PlatformHelpers.CopyFilesRecursively(currentDir, devDir);
+            SetLocalAssetVer(baseDir, info.Version);
+            CleanUpOld(baseDir, devDir, currentDir);
+
+            Log.Information("[DASSET] Korean assets ready at {AssetPath}", currentDir.FullName);
+            return (currentDir, info.Version);
+        }
+
+        private static bool HashMatches(string filePath, string? expectedHash)
+        {
+            if (!File.Exists(filePath))
+                return false;
+            if (string.IsNullOrWhiteSpace(expectedHash))
+                return true;
+
+            using var file = File.OpenRead(filePath);
+            using var sha1 = SHA1.Create();
+            var actualHash = Convert.ToHexString(sha1.ComputeHash(file));
+            return string.Equals(actualHash, expectedHash, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static void ValidateKoreanAssetUrl(string url)
+        {
+            if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)
+                || uri.Scheme != Uri.UriSchemeHttps
+                || !string.Equals(uri.Host, "raw.githubusercontent.com", StringComparison.OrdinalIgnoreCase)
+                || !uri.AbsolutePath.StartsWith("/goatcorp/DalamudAssets/", StringComparison.Ordinal))
+            {
+                throw new DalamudIntegrityException("The Dalamud asset manifest contained an untrusted URL.");
+            }
+        }
+
         private static string GetAssetVerPath(DirectoryInfo baseDir)
         {
             return Path.Combine(baseDir.FullName, "asset.ver");
@@ -228,6 +312,7 @@ namespace XIVLauncher.Common.Dalamud
     }
     
     [JsonSerializable(typeof(AssetManager.AssetInfo))]
+    [JsonSourceGenerationOptions(PropertyNameCaseInsensitive = true)]
     internal partial class AssetInfoJsonContext: JsonSerializerContext
     {
     }

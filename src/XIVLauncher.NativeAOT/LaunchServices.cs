@@ -291,16 +291,8 @@ public static class LaunchServices
         return launchedProcess!;
     }
 
-    public static Process StartKoreanGameAndAddon(string gameToken, bool dalamudOk)
+    public static Process StartKoreanGameAndAddon(string gameToken, bool dalamudOk, bool noPlugins)
     {
-        // Dalamud.Injector currently supports the global client languages only and
-        // rejects ClientLanguage.Korean (value 5). Keep this guard in the bridge as
-        // well as the Swift caller so a stale or third-party caller cannot regress
-        // Korean game startup.
-        if (dalamudOk)
-            Log.Warning("[KOREA] Dalamud is not supported for the Korean client; launching without injection");
-        dalamudOk = false;
-
         IDalamudRunner dalamudRunner = Environment.OSVersion.Platform switch
         {
             PlatformID.Win32NT => new WindowsDalamudRunner(Program.DalamudUpdater.Runtime),
@@ -313,13 +305,13 @@ public static class LaunchServices
             Program.DalamudUpdater,
             Program.Config!.DalamudLoadMethod.GetValueOrDefault(DalamudLoadMethod.DllInject),
             Program.Config.GamePath,
-            Program.Storage!.Root,
+            Program.Storage!.GetFolder("dalamud-korea-data"),
             Program.Storage.GetFolder("logs"),
             ClientLanguage.Korean,
             Program.Config.DalamudLoadDelay,
             false,
-            false,
-            false,
+            noPlugins,
+            noPlugins,
             Troubleshooting.GetTroubleshootingJson());
 
         IGameRunner runner;
